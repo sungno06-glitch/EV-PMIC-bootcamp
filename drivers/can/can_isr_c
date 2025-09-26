@@ -1,0 +1,32 @@
+#include "can_isr.h"
+#include <string.h>
+
+static volatile uint16_t s_head, s_tail;
+static can_msg_t s_ring[CAN_RX_RING_SIZE];
+
+void can_init_isr(void){
+    s_head = s_tail = 0;
+    // TODO: 하드웨어 CAN init + NVIC enable
+}
+
+bool can_send(const can_msg_t *msg){
+    (void)msg;
+    // TODO: 하드웨어 TX 메일박스에 적재 (Non-blocking)
+    return true;
+}
+
+static bool ring_push(const can_msg_t *m){
+    uint16_t nhead = (s_head + 1) % CAN_RX_RING_SIZE;
+    if (nhead == s_tail) return false; // full
+    s_ring[s_head] = *m; s_head = nhead; return true;
+}
+
+bool can_recv(can_msg_t *out){
+    if (s_head == s_tail) return false;
+    *out = s_ring[s_tail]; s_tail = (s_tail + 1) % CAN_RX_RING_SIZE;
+    return true;
+}
+
+void can_isr_rx_handler(const can_msg_t *rx){
+    (void)ring_push(rx); // 넘치면 드롭
+}

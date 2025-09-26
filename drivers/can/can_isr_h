@@ -1,0 +1,22 @@
+#ifndef CAN_ISR_H
+#define CAN_ISR_H
+#include <stdint.h>
+#include <stdbool.h>
+#include "../../include/app_config.h"
+
+typedef struct {
+    uint32_t id;
+    uint8_t  len;
+    uint8_t  data[8];
+} can_msg_t;
+
+void can_init_isr(void);
+bool can_send(const can_msg_t *msg);
+
+// ISR(수신)에서 적재 → 메인 루프에서 꺼내 처리
+bool can_recv(can_msg_t *out);
+
+// ▷ 타겟 RX 인터럽트에서 호출하세요 (수신 프레임 인자로 전달)
+void can_isr_rx_handler(const can_msg_t *rx);
+
+#endif

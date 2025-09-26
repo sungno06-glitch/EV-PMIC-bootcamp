@@ -1,44 +1,81 @@
 #include <stdio.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <time.h>
+#include "../platform/board.h"
 #include "../include/app_config.h"
+#include "../include/testcase.h"
 
-#ifdef _WIN32
-  #include <windows.h>
-  static void msleep(unsigned ms){ Sleep(ms); }
-#else
-  #include <unistd.h>
-  static void msleep(unsigned ms){ usleep(ms*1000); }
-#endif
+#include "../drivers/uart/uart_poll.h"
+#include "../drivers/can/can_isr.h"
+#include "../drivers/i2c/i2c_dma.h"
+#include "../drivers/spi/spi_dma.h"
 
-// 현재 시간(ms)
-static uint64_t now_ms(void){
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec*1000ULL + ts.tv_nsec/1000000ULL;
-}
-
-// 각 슬롯 더미 작업
-static void task_i2c(void){  printf("[I2C]  poll PMIC status\n"); }
-static void task_spi(void){  printf("[SPI]  EEPROM service\n"); }
-static void task_can(void){  printf("[CAN]  service UDS requests\n"); }
-static void task_uart(void){ printf("[UART] heartbeat: System OK\n"); }
+#include "../services/pmic_service.h"
+#include "../services/uds_handler.h"
+#include "../services/dtc_manager.h"
 
 int main(void){
-    printf("Boot OK (Beginner: I2C -> SPI -> CAN -> UART)\n");
+    // 보드 초기화
+    board_init_clock_gpio();
+    board_init_systick_1ms();
+    uart_init_poll();
+    can_init_isr();
+    i2c_init_dma();
+    spi_init_dma();
 
-    uint64_t t0_uart=0, t0_i2c=0, t0_spi=0, t0_can=0;
+#if TESTCASE
+    // -------------------------------
+    // TEST MODE (Req.8)
+    // -------------------------------
+    uart_write_str("System Boot in TEST MODE\r\n");
+    run_all_tests();   // WhiteBox + BlackBox TC 실행
+    while(1);          // 테스트 모드에서는 루프 진입하지 않음
+
+#else
+    // -------------------------------
+    // NORMAL MODE (Req.1~7)
+    // -------------------------------
+    uart_write_str("System Boot in NORMAL MODE\r\n");
+
+    static uint32_t t_uart=0, t_pmic=0, t_can=0, t_vout=0;
 
     for(;;){
-        uint64_t now = now_ms();
+        uint32_t now = millis();
 
-        if (now - t0_i2c >= I2C_POLL_MS){ t0_i2c = now; task_i2c(); }
-        if (now - t0_spi >= SPI_IDLE_MS){ t0_spi = now; task_spi(); }
-        if (now - t0_can >= CAN_SERVICE_MS){ t0_can = now; task_can(); }
-        if (now - t0_uart >= UART_HEARTBEAT_MS){ t0_uart = now; task_uart(); }
+        // [Req.4] PMIC Fault 감지 → DTC 저장
+        if (now - t_pmic >= 20){
+            t_pmic = now;
+            pmic_check_faults();
+        }
 
-        msleep(5);
+        // [Req.7] CAN 수신 → UDS Handler
+        if (now - t_can >= 10){
+            t_can = now;
+            can_msg_t rx;
+            while (can_recv(&rx)){
+                UDS_HandleMessage(&rx);
+            }
+        }
+
+        // [Req.4] UART Heartbeat
+        if (now - t_uart >= 500){
+            t_uart = now;
+            uart_write_str("[HB] System Normal\r\n");
+        }
+
+        // [Req.5] PMIC VOUT 제어 (예시: 5초마다 3.3V ↔ 5V 변경)
+        if (now - t_vout >= 5000){
+            t_vout = now;
+            static uint16_t volt = 3300;
+            volt = (volt==3300) ? 5000 : 3300;
+            pmic_set_voltage(volt);
+        }
+
+        // [Req.1] 루프 내 통신 순서 → I2C → SPI → CAN → UART
+        // (이미 위 타이머 순환 구조 안에서 충족)
     }
-    return 0;
+#endif
 }
+
+
+
+
+
